@@ -4,11 +4,13 @@ import json
 import re
 import requests
 from pathlib import Path
+from collections import defaultdict
 import airportsdata
 
 from PyQt6.QtCore import QThread, pyqtSignal, QTimer
 from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QLabel
 from PyQt6.QtWebEngineWidgets import QWebEngineView
+from PyQt6.QtWebEngineCore import QWebEnginePage
 
 AIRPORTS_DB = airportsdata.load('ICAO')
 
@@ -19,6 +21,10 @@ MY_LAT = 51.471537
 MY_LON = -0.334237
 RADIUS_NM = 30
 DEFAULT_ZOOM = 9
+
+# Backup history storage for route trails
+POSITION_HISTORY = defaultdict(list)
+MAX_HISTORY_POINTS = 100
 
 SVG_FOLDER = Path(r"C:\Users\lol42\Downloads\Shapes SVG").resolve()
 ICON_SOLID_COLOR = "#FFD700"  # Bright Gold
@@ -31,7 +37,6 @@ HEADERS = {
 LAST_KNOWN_HEADINGS = {}
 SVG_CACHE = {}
 
-# Set of common helicopter ICAO designators to automatically map to H60
 HELICOPTER_TYPES = {
     "R44", "R22", "R66", "EC35", "EC45", "EC30", "EC20", "EC55", 
     "B06", "B206", "B407", "B412", "B429", "H60", "S76", "S92", 
@@ -44,9 +49,6 @@ FALLBACK_SVG = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"
 </svg>"""
 
 def sanitize_svg_code(svg_text):
-    """
-    Strips opacities and forces all paths/shapes inside the SVG to solid gold with a thin black outline.
-    """
     svg_text = re.sub(r'opacity=["\'][^"\']*["\']', '', svg_text, flags=re.IGNORECASE)
     svg_text = re.sub(r'fill-opacity=["\'][^"\']*["\']', '', svg_text, flags=re.IGNORECASE)
     svg_text = re.sub(r'stroke-opacity=["\'][^"\']*["\']', '', svg_text, flags=re.IGNORECASE)
@@ -56,7 +58,6 @@ def sanitize_svg_code(svg_text):
     svg_text = re.sub(r'stroke=["\'][^"\']*["\']', '', svg_text, flags=re.IGNORECASE)
     svg_text = re.sub(r'stroke-width=["\'][^"\']*["\']', '', svg_text, flags=re.IGNORECASE)
 
-    # Adds stroke="#000000" and stroke-width="1.5" for a thin black outline
     svg_text = re.sub(
         r'<(path|polygon|rect|circle|g)\b',
         rf'<\1 fill="{ICON_SOLID_COLOR}" stroke="#000000" stroke-width="1" stroke-linejoin="round" ',
@@ -70,7 +71,6 @@ def sanitize_svg_code(svg_text):
     return " ".join(svg_text.split())
 
 def preload_svgs():
-    """Preloads and sanitizes all local SVG files."""
     SVG_CACHE["DEFAULT"] = sanitize_svg_code(FALLBACK_SVG)
 
     if SVG_FOLDER.exists():
@@ -83,35 +83,26 @@ def preload_svgs():
                 SVG_CACHE[key] = clean_svg
             except Exception as e:
                 print(f"Error reading {file.name}: {e}")
-    else:
-        print(f"Warning: Folder not found at {SVG_FOLDER}")
 
 def get_svg_string(actype, category=""):
     clean = str(actype).strip().upper()
     cat = str(category).strip().upper()
     
-    # 1. Map A319 to a19n.svg
     if clean == "A319":
         clean = "A19N"
     
-    # 2. Map all helicopters to H60.svg (via category 'A7' or designator list)
     if cat == "A7" or clean in HELICOPTER_TYPES or "HELI" in clean or clean.startswith("H"):
         clean = "H60"
 
-    # Direct match
     if clean in SVG_CACHE:
         return SVG_CACHE[clean]
     
-    # Partial match fallback
     for key, code in SVG_CACHE.items():
         if clean in key or key in clean:
             return code
             
     return SVG_CACHE["DEFAULT"]
 
-# -------------------------------------------------------------
-# DATA HELPERS
-# -------------------------------------------------------------
 def get_airport_name(code):
     if not code or code == "N/A": return "N/A"
     clean_code = str(code).strip().upper()
@@ -143,8 +134,12 @@ def extract_heading(plane, hex_code):
 class DataFetchThread(QThread):
     data_ready = pyqtSignal(dict)
 
+    def __init__(self, selected_hex=None):
+        super().__init__()
+        self.selected_hex = selected_hex
+
     def run(self):
-        result = {"aircraft": [], "closest_plane": None, "route": ("N/A", "N/A"), "trace": []}
+        result = {"aircraft": [], "tracked_plane": None, "closest_plane": None, "route": ("N/A", "N/A"), "trace": []}
         endpoints = [
             f"https://opendata.adsb.fi/api/v3/lat/{MY_LAT}/lon/{MY_LON}/dist/{RADIUS_NM}",
             f"https://api.adsb.lol/v2/lat/{MY_LAT}/lon/{MY_LON}/dist/{RADIUS_NM}"
@@ -165,27 +160,57 @@ class DataFetchThread(QThread):
 
         min_dist = float("inf")
         closest = None
+        selected_plane = None
+
         for plane in aircraft_list:
             p_lat, p_lon = plane.get("lat"), plane.get("lon")
+            p_hex = str(plane.get("hex", "")).upper()
+            
             if p_lat is not None and p_lon is not None:
+                # Update local memory as a fallback
+                coords = [p_lat, p_lon]
+                if not POSITION_HISTORY[p_hex] or POSITION_HISTORY[p_hex][-1] != coords:
+                    POSITION_HISTORY[p_hex].append(coords)
+                    if len(POSITION_HISTORY[p_hex]) > MAX_HISTORY_POINTS:
+                        POSITION_HISTORY[p_hex].pop(0)
+
                 dist = haversine_nm(MY_LAT, MY_LON, p_lat, p_lon)
                 if dist < min_dist:
                     min_dist = dist
                     closest = plane
+                if self.selected_hex and p_hex == self.selected_hex.upper():
+                    selected_plane = plane
 
-        if closest:
-            result["closest_plane"] = closest
-            hex_code = str(closest.get("hex", "")).lower()
-            callsign = str(closest.get("flight", "")).strip()
+        result["closest_plane"] = closest
+        tracked = selected_plane if selected_plane else closest
+        result["tracked_plane"] = tracked
 
+        if tracked:
+            tracked_hex = str(tracked.get("hex", "")).lower()
+            callsign = str(tracked.get("flight", "")).strip()
+
+            # Attempt to fetch full route history directly from API
+            api_trace_fetched = False
             try:
-                t_res = requests.get(f"https://opendata.adsb.fi/api/v2/trace/{hex_code}", headers=HEADERS, timeout=3)
+                trace_url = f"https://opendata.adsb.fi/api/v2/trace/{tracked_hex}"
+                t_res = requests.get(trace_url, headers=HEADERS, timeout=4)
                 if t_res.status_code == 200:
-                    trace_pts = t_res.json().get("trace", [])
-                    result["trace"] = [[pt[1], pt[2]] for pt in trace_pts if len(pt) >= 3 and pt[1] and pt[2]]
-            except Exception:
-                pass
+                    raw_trace = t_res.json().get("trace", [])
+                    extracted_trace = [
+                        [pt[1], pt[2]] for pt in raw_trace 
+                        if len(pt) >= 3 and pt[1] is not None and pt[2] is not None
+                    ]
+                    if extracted_trace:
+                        result["trace"] = extracted_trace
+                        api_trace_fetched = True
+            except Exception as e:
+                print(f"Error fetching API trace: {e}")
 
+            # Fall back to locally stored coordinates if API trace returns nothing
+            if not api_trace_fetched:
+                result["trace"] = POSITION_HISTORY.get(tracked_hex.upper(), [])
+
+            # Fetch flight origin & destination
             if callsign and callsign not in ["UNKNOWN", "N/A"]:
                 try:
                     r_res = requests.get(f"https://api.adsbdb.com/v0/callsign/{callsign}", headers=HEADERS, timeout=2)
@@ -216,6 +241,8 @@ BASE_MAP_HTML = f"""
             align-items: center;
             justify-content: center;
             filter: drop-shadow(0px 0px 2px #000) drop-shadow(0px 2px 4px rgba(0,0,0,0.9));
+            cursor: pointer !important;
+            pointer-events: auto !important;
         }}
     </style>
 </head>
@@ -230,28 +257,42 @@ BASE_MAP_HTML = f"""
         var aircraftMarkers = {{}};
         var leadLine = null, trailLine = null;
 
-        function updateMapData(aircraftList, closestHex, closestTrace) {{
+        map.on('click', function(e) {{
+            console.log('SELECT_HEX:CLEAR');
+        }});
+
+        function updateMapData(aircraftList, trackedHex, trackedTrace) {{
             var active = {{}};
 
             aircraftList.forEach(function(p) {{
                 active[p.hex] = true;
-                var isClosest = (p.hex === closestHex);
-                var size = isClosest ? 40 : 30;
+                var isTracked = (p.hex === trackedHex);
+                var size = isTracked ? 44 : 30;
 
                 var html = '<div class="aircraft-wrapper" style="transform: rotate(' + p.heading + 'deg);">' + p.svgCode + '</div>';
 
                 var icon = L.divIcon({{ html: html, iconSize: [size, size], iconAnchor: [size/2, size/2] }});
-                var tooltip = p.callsign + ' [' + p.actype + '] (' + p.dist.toFixed(1) + ' NM)';
+                var tooltipText = p.callsign + ' [' + p.actype + '] (' + p.dist.toFixed(1) + ' NM)';
 
                 if (aircraftMarkers[p.hex]) {{
                     aircraftMarkers[p.hex].setLatLng([p.lat, p.lon]);
                     aircraftMarkers[p.hex].setIcon(icon);
-                    aircraftMarkers[p.hex].setTooltipContent(tooltip);
+                    aircraftMarkers[p.hex].setTooltipContent(tooltipText);
                 }} else {{
-                    aircraftMarkers[p.hex] = L.marker([p.lat, p.lon], {{ icon: icon }}).bindTooltip(tooltip).addTo(map);
+                    var marker = L.marker([p.lat, p.lon], {{ icon: icon, interactive: true }}).addTo(map);
+                    marker.bindTooltip(tooltipText, {{ interactive: false }});
+                    
+                    (function(hexCode) {{
+                        marker.on('click', function(e) {{
+                            if (e && e.originalEvent) e.originalEvent.stopPropagation();
+                            console.log('SELECT_HEX:' + hexCode);
+                        }});
+                    }})(p.hex);
+
+                    aircraftMarkers[p.hex] = marker;
                 }}
 
-                if (isClosest) {{
+                if (isTracked) {{
                     var lineCoords = [[{MY_LAT}, {MY_LON}], [p.lat, p.lon]];
                     if (leadLine) leadLine.setLatLngs(lineCoords);
                     else leadLine = L.polyline(lineCoords, {{ color: '#FF007F', weight: 2, dashArray: '5,5' }}).addTo(map);
@@ -262,17 +303,44 @@ BASE_MAP_HTML = f"""
                 if (!active[hex]) {{ map.removeLayer(aircraftMarkers[hex]); delete aircraftMarkers[hex]; }}
             }}
 
-            if (closestHex && closestTrace && closestTrace.length >= 2) {{
-                if (trailLine) trailLine.setLatLngs(closestTrace);
-                else trailLine = L.polyline(closestTrace, {{ color: '#FF007F', weight: 3 }}).addTo(map);
+            // Render solid green route trail
+            if (trackedHex && trackedTrace && trackedTrace.length >= 2) {{
+                var trailOptions = {{
+                    color: '#00FF88',
+                    weight: 3,
+                    dashArray: null,
+                    lineCap: 'round',
+                    opacity: 0.95
+                }};
+
+                if (trailLine) {{
+                    trailLine.setLatLngs(trackedTrace);
+                    trailLine.setStyle(trailOptions);
+                }} else {{
+                    trailLine = L.polyline(trackedTrace, trailOptions).addTo(map);
+                }}
             }} else if (trailLine) {{
-                map.removeLayer(trailLine); trailLine = null;
+                map.removeLayer(trailLine); 
+                trailLine = null;
             }}
         }}
     </script>
 </body>
 </html>
 """
+
+class CustomWebEnginePage(QWebEnginePage):
+    def __init__(self, parent_tracker):
+        super().__init__(parent_tracker)
+        self.tracker = parent_tracker
+
+    def javaScriptConsoleMessage(self, level, message, lineNumber, sourceID):
+        if "SELECT_HEX:" in message:
+            target_hex = message.split("SELECT_HEX:")[1].strip()
+            if target_hex == "CLEAR":
+                self.tracker.on_plane_selected("")
+            else:
+                self.tracker.on_plane_selected(target_hex)
 
 class SatelliteMapTracker(QMainWindow):
     def __init__(self):
@@ -281,6 +349,8 @@ class SatelliteMapTracker(QMainWindow):
 
         self.setWindowTitle("Satellite ADSB Aircraft Tracker")
         self.setGeometry(100, 100, 1200, 750)
+
+        self.selected_hex = None
 
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
@@ -292,9 +362,9 @@ class SatelliteMapTracker(QMainWindow):
         self.data_panel.setStyleSheet("background-color: #121212; color: #FFFFFF;")
         panel_layout = QVBoxLayout(self.data_panel)
 
-        title = QLabel("TRACKED AIRCRAFT")
-        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #FF007F;")
-        panel_layout.addWidget(title)
+        self.title_label = QLabel("TRACKED AIRCRAFT (CLOSEST)")
+        self.title_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #FF007F;")
+        panel_layout.addWidget(self.title_label)
 
         self.info_labels = {}
         fields = ["callsign", "actype", "registration", "origin", "destination", "distance", "hex", "alt", "speed", "heading"]
@@ -311,7 +381,10 @@ class SatelliteMapTracker(QMainWindow):
         main_layout.addWidget(self.data_panel)
 
         self.web_view = QWebEngineView()
+        self.web_page = CustomWebEnginePage(self)
+        self.web_view.setPage(self.web_page)
         main_layout.addWidget(self.web_view)
+        
         self.web_view.setHtml(BASE_MAP_HTML)
 
         self.fetch_thread = None
@@ -321,15 +394,25 @@ class SatelliteMapTracker(QMainWindow):
         self.timer.start(5000)
         self.start_async_update()
 
+    def on_plane_selected(self, hex_code):
+        clean_hex = hex_code.strip().upper()
+        if clean_hex and clean_hex != self.selected_hex:
+            self.selected_hex = clean_hex
+        else:
+            self.selected_hex = None
+        
+        self.start_async_update()
+
     def start_async_update(self):
         if self.fetch_thread and self.fetch_thread.isRunning():
             return
-        self.fetch_thread = DataFetchThread()
+        self.fetch_thread = DataFetchThread(selected_hex=self.selected_hex)
         self.fetch_thread.data_ready.connect(self.handle_data_ready)
         self.fetch_thread.start()
 
     def handle_data_ready(self, data):
         aircraft_list = data.get("aircraft", [])
+        tracked = data.get("tracked_plane")
         closest = data.get("closest_plane")
         route = data.get("route", ("N/A", "N/A"))
         trace = data.get("trace", [])
@@ -351,24 +434,37 @@ class SatelliteMapTracker(QMainWindow):
                 "dist": haversine_nm(MY_LAT, MY_LON, lat, lon)
             })
 
+        tracked_hex = str(tracked.get("hex", "")).upper() if tracked else ""
         closest_hex = str(closest.get("hex", "")).upper() if closest else ""
-        self.web_view.page().runJavaScript(f"updateMapData({json.dumps(formatted)}, '{closest_hex}', {json.dumps(trace)});")
 
-        if not closest:
+        if self.selected_hex and tracked_hex != self.selected_hex:
+            self.selected_hex = None
+            self.title_label.setText("TRACKED AIRCRAFT (CLOSEST)")
+        elif self.selected_hex and self.selected_hex == tracked_hex:
+            if self.selected_hex == closest_hex:
+                self.title_label.setText("TRACKED AIRCRAFT (SELECTED & CLOSEST)")
+            else:
+                self.title_label.setText("TRACKED AIRCRAFT (SELECTED)")
+        else:
+            self.title_label.setText("TRACKED AIRCRAFT (CLOSEST)")
+
+        self.web_view.page().runJavaScript(f"updateMapData({json.dumps(formatted)}, '{tracked_hex}', {json.dumps(trace)});")
+
+        if not tracked:
             for l in self.info_labels.values(): l.setText("--")
             return
 
-        self.info_labels["callsign"].setText(str(closest.get("flight", "UNKNOWN")).strip())
-        self.info_labels["actype"].setText(str(closest.get("t", "N/A")))
-        self.info_labels["registration"].setText(str(closest.get("r", "N/A")))
+        self.info_labels["callsign"].setText(str(tracked.get("flight", "UNKNOWN")).strip())
+        self.info_labels["actype"].setText(str(tracked.get("t", "N/A")))
+        self.info_labels["registration"].setText(str(tracked.get("r", "N/A")))
         self.info_labels["origin"].setText(get_airport_name(route[0]))
         self.info_labels["destination"].setText(get_airport_name(route[1]))
-        dist = haversine_nm(MY_LAT, MY_LON, closest.get("lat"), closest.get("lon"))
+        dist = haversine_nm(MY_LAT, MY_LON, tracked.get("lat"), tracked.get("lon"))
         self.info_labels["distance"].setText(f"{dist:.2f} NM")
-        self.info_labels["hex"].setText(closest_hex)
-        self.info_labels["alt"].setText(f"{closest.get('alt_baro', 'N/A')} ft")
-        self.info_labels["speed"].setText(f"{closest.get('gs', 'N/A')} kts")
-        self.info_labels["heading"].setText(f"{extract_heading(closest, closest_hex):.1f}°")
+        self.info_labels["hex"].setText(tracked_hex)
+        self.info_labels["alt"].setText(f"{tracked.get('alt_baro', 'N/A')} ft")
+        self.info_labels["speed"].setText(f"{tracked.get('gs', 'N/A')} kts")
+        self.info_labels["heading"].setText(f"{extract_heading(tracked, tracked_hex):.1f}°")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
