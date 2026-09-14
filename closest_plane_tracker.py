@@ -8,11 +8,127 @@ from collections import defaultdict
 import airportsdata
 
 from PyQt6.QtCore import QThread, pyqtSignal, QTimer
-from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QLabel
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QHBoxLayout, 
+                             QVBoxLayout, QLabel, QComboBox, QPushButton)
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEnginePage
 
 AIRPORTS_DB = airportsdata.load('ICAO')
+
+# -------------------------------------------------------------
+# TOP 10 BUSIEST AIRPORTS IN THE WORLD (ICAO Data)
+# -------------------------------------------------------------
+BUSIEST_AIRPORTS = [
+    ("KATL - Atlanta Hartsfield-Jackson", "KATL"),
+    ("OMDB - Dubai International", "OMDB"),
+    ("RJTT - Tokyo Haneda", "RJTT"),
+    ("KDFW - Dallas/Fort Worth", "KDFW"),
+    ("ZSPD - Shanghai Pudong", "ZSPD"),
+    ("KORD - Chicago O'Hare", "KORD"),
+    ("EGLL - London Heathrow", "EGLL"),
+    ("LTFM - Istanbul Airport", "LTFM"),
+    ("ZGGG - Guangzhou Baiyun", "ZGGG"),
+    ("KDEN - Denver International", "KDEN")
+]
+
+# -------------------------------------------------------------
+# RUNWAY APPROACHES & THRESHOLDS
+# -------------------------------------------------------------
+CUSTOM_RUNWAY_APPROACHES = [
+    # London Heathrow
+    ("LHR 27 APP", "51.471537,-0.334237"),
+    ("LHR 09 APP", "51.469687,-0.550237"),
+
+    # JFK - John F. Kennedy International
+    ("KJFK RWY 22L", "40.716717,-73.697983"),
+    ("KJFK RWY 22R", "40.722000,-73.706433"),
+    ("KJFK RWY 13L", "40.700667,-73.882050"),
+
+    # IAH - George Bush Intercontinental
+    ("KIAH RWY 26L", "29.993433,-95.229850"),
+    ("KIAH RWY 26R", "30.007183,-95.234917"),
+    ("KIAH RWY 27",  "29.977617,-95.207117"),
+
+    # LGA - LaGuardia Airport
+    ("KLGA RWY 22",  "40.856033,-73.811967"),
+    ("KLGA RWY 31",  "40.727833,-73.763800"),
+]
+
+# -------------------------------------------------------------
+# AIRLINE ICAO LOOKUP DICTIONARY
+# -------------------------------------------------------------
+AIRLINES_DB = {
+    "AAL": "American Airlines", "AAR": "Asiana Airlines", "ABD": "Air Atlanta Icelandic",
+    "ABL": "Air Busan", "ABR": "ASL Airlines Ireland", "ACA": "Air Canada",
+    "ACI": "Aircalin", "AEA": "Air Europa", "AEE": "Aegean Airlines",
+    "AFL": "Aeroflot", "AFR": "Air France", "AHY": "Azerbaijan Airlines",
+    "AIC": "Air India", "AIZ": "Arkia Israeli Airlines", "AKX": "ANA Wings",
+    "ALD": "Air Leisure", "ALY": "El Al Israel Airlines", "AMC": "Air Malta",
+    "ANA": "All Nippon Airways", "ANS": "Andes Líneas Aéreas", "AOJ": "Avangard Aviation",
+    "APG": "Air France Hop", "APN": "Air Nippon", "ARA": "Arik Air",
+    "ARE": "LATAM Airlines Colombia", "ARG": "Aerolíneas Argentinas", "ASA": "Alaska Airlines",
+    "ASL": "Air Serbia", "ASY": "Australian Air Force", "AUA": "Austrian Airlines",
+    "AVA": "Avianca", "AWE": "US Airways", "AXM": "AirAsia",
+    "AZA": "ITA Airways / Alitalia", "AZU": "Azul Brazilian Airlines", "BAW": "British Airways",
+    "BCH": "Binter Canarias", "BED": "Belgrade Flight School", "BER": "Air Berlin",
+    "BFR": "Burkina Airlines", "BGB": "Binter Canarias", "BKP": "Bangkok Airways",
+    "BLX": "TUI Airways Nordic", "BMA": "BMI Regional", "BMI": "bmi",
+    "BOS": "La Compagnie", "BPA": "Blue Panorama Airlines", "BRT": "British Regional Airlines",
+    "BTI": "airBaltic", "BTP": "Balkan Holidays Air", "BUC": "European Air Charter",
+    "BUS": "BinAir", "CBY": "Camair-Co", "CCA": "Air China",
+    "CEB": "Cebu Pacific", "CES": "China Eastern Airlines", "CFG": "Condor",
+    "CHA": "Bizjet Aviation", "CHF": "Swiss Air Force", "CHH": "Hainan Airlines",
+    "CIM": "Cimber Air", "CLX": "Cargolux", "CMP": "Copa Airlines",
+    "CNA": "Canair", "CNE": "CanJet", "CPA": "Cathay Pacific",
+    "CPN": "Caspian Airlines", "CSA": "Czech Airlines", "CSN": "China Southern Airlines",
+    "CSH": "Shanghai Airlines", "CTN": "Croatia Airlines", "CUB": "Cubana de Aviación",
+    "CYP": "Cyprus Airways", "DAL": "Delta Air Lines", "DAN": "Dan Air",
+    "DCM": "DHL Aviation", "DLH": "Lufthansa", "DTR": "DAT Danish Air Transport",
+    "EDW": "Edelweiss Air", "EIN": "Aer Lingus", "EJU": "easyJet Europe",
+    "ELA": "Cello Aviation", "ELY": "El Al Israel Airlines", "UAE": "Emirates",
+    "EGF": "American Eagle", "ETH": "Ethiopian Airlines", "ETD": "Etihad Airways",
+    "EVA": "EVA Air", "EWG": "Eurowings", "EZY": "easyJet",
+    "EZS": "easyJet Switzerland", "FDX": "FedEx Express", "FIN": "Finnair",
+    "FJI": "Fiji Airways", "FMY": "French Air Force", "FPO": "ASL Airlines France",
+    "FWI": "Air Caraïbes", "GAO": "Golden Air", "GFA": "Gulf Air",
+    "GIA": "Garuda Indonesia", "GTI": "Atlas Air", "HAL": "Hawaiian Airlines",
+    "HFY": "Hi Fly", "HDA": "Cathay Dragon", "HVN": "Vietnam Airlines",
+    "IBE": "Iberia", "IBS": "Iberia Express", "ICE": "Icelandair",
+    "IGO": "IndiGo", "ISR": "Israir Airlines", "JAF": "TUI fly Belgium",
+    "JAL": "Japan Airlines", "JAT": "Air Serbia", "JBA": "Helijet",
+    "JBU": "JetBlue Airways", "JST": "Jetstar Airways", "KAC": "Kuwait Airways",
+    "KAL": "Korean Air", "KLM": "KLM Royal Dutch Airlines", "KMC": "Kawasaki Heavy Industries",
+    "KNE": "Flynas", "KQA": "Kenya Airways", "LAN": "LATAM Chile",
+    "LOG": "Loganair", "LOT": "LOT Polish Airlines", "LRC": "Avianca Costa Rica",
+    "LTE": "LTE International Airways", "LTU": "LTU International", "LVG": "Livingston",
+    "LZB": "Bulgaria Air", "MAA": "MasAir", "MAC": "Air Arabia",
+    "MAH": "Malev Hungarian Airlines", "MAS": "Malaysia Airlines", "MAU": "Air Mauritius",
+    "MDW": "Midway Airlines", "MEA": "Middle East Airlines", "MES": "Mesaba Airlines",
+    "MGL": "MIAT Mongolian Airlines", "MPH": "Martinair", "MSR": "EgyptAir",
+    "NAX": "Norwegian Air Shuttle", "NKS": "Spirit Airlines", "NLY": "Niki",
+    "NNO": "Norte Air", "NOK": "Nok Air", "NVR": "Novair",
+    "OAL": "Olympic Air", "OMA": "Oman Air", "OAE": "Omni Air International",
+    "PAC": "Polar Air Cargo", "PAL": "Philippine Airlines", "PIA": "Pakistan International Airlines",
+    "PLN": "Aero VIP", "QFA": "Qantas", "QTR": "Qatar Airways",
+    "RAM": "Royal Air Maroc", "RAR": "Air Rarotonga", "RBA": "Royal Brunei Airlines",
+    "REA": "Aer Lingus Regional", "RGL": "Regional Air Lines", "RIT": "Asian Air",
+    "RJU": "Rooster Aviation", "RNA": "Nepal Airlines", "ROU": "Air Canada Rouge",
+    "RPA": "Republic Airways", "RRA": "Royal Air Freight", "RRE": "Reach Air Medical Services",
+    "RSO": "Aero Sahara", "RSR": "Air Spruns", "RWD": "RwandAir",
+    "RYR": "Ryanair", "SAA": "South African Airways", "SAS": "Scandinavian Airlines (SAS)",
+    "SAT": "SATA Air Açores", "SAY": "ScotAirways", "SIA": "Singapore Airlines",
+    "SBA": "Aero VIP", "SDA": "Solinair", "SEY": "Air Seychelles",
+    "SHT": "British Airways Shuttle", "SIL": "Air Senegal", "SKW": "SkyWest Airlines",
+    "SLK": "SilkAir", "SNA": "Senator Aviation Services", "SUD": "Sudan Airways",
+    "SVA": "Saudia", "SWR": "Swiss International Air Lines", "TAM": "LATAM Brasil",
+    "TAP": "TAP Air Portugal", "TAR": "Tunisair", "TFL": "TUI fly Netherlands",
+    "TGW": "Scoot", "THA": "Thai Airways", "THY": "Turkish Airlines",
+    "TOM": "TUI Airways", "TRA": "Transavia", "TRS": "AirTran Airways",
+    "TSC": "Air Transat", "TVF": "Transavia France", "UAL": "United Airlines",
+    "UPS": "UPS Airlines", "UTA": "UTair Aviation", "VIR": "Virgin Atlantic",
+    "VOZ": "Virgin Australia", "VLG": "Vueling Airlines", "VTE": "Volotea",
+    "WZZ": "Wizz Air", "XAX": "AirAsia X"
+}
 
 # -------------------------------------------------------------
 # CONFIGURATION
@@ -22,7 +138,6 @@ MY_LON = -0.334237
 RADIUS_NM = 30
 DEFAULT_ZOOM = 9
 
-# Backup history storage for route trails
 POSITION_HISTORY = defaultdict(list)
 MAX_HISTORY_POINTS = 100
 
@@ -45,8 +160,15 @@ HELICOPTER_TYPES = {
 }
 
 FALLBACK_SVG = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%">
-    <path fill="{ICON_SOLID_COLOR}" stroke="#000000" stroke-width="2" d="M 50 3.5 C 48 3.5 46.5 7 46.1 14.4 L 46.1 39.4 L 4.3 61.7 L 9.2 64 L 46.1 53.9 L 46.1 81.6 L 33.6 93.3 L 50 90.2 L 66.4 93.3 L 53.9 81.6 L 53.9 53.9 L 95.7 61.7 L 53.9 39.4 L 53.9 14.4 Z"/>
+    <path fill="{ICON_SOLID_COLOR}" stroke="#000000" stroke-width="2" d="M 50 3.5 C 48 3.5 46.5 7 46.1 14.4 L 46.1 39.4 L 4.3 61.7 L 9.2 64 L 46.1 53.9 L 46.1 81.6 L 33.6 93.3 L 53.9 81.6 L 53.9 53.9 L 95.7 61.7 L 53.9 39.4 L 53.9 14.4 Z"/>
 </svg>"""
+
+def get_airline_name(callsign):
+    if not callsign or callsign in ["UNKNOWN", "N/A"]:
+        return "Unknown Airline"
+    clean_callsign = str(callsign).strip().upper()
+    prefix = clean_callsign[:3]
+    return AIRLINES_DB.get(prefix, "Private / General Aviation")
 
 def sanitize_svg_code(svg_text):
     svg_text = re.sub(r'opacity=["\'][^"\']*["\']', '', svg_text, flags=re.IGNORECASE)
@@ -78,7 +200,6 @@ def preload_svgs():
             try:
                 raw_text = file.read_text(encoding="utf-8", errors="ignore")
                 clean_svg = sanitize_svg_code(raw_text)
-                
                 key = file.stem.upper().strip()
                 SVG_CACHE[key] = clean_svg
             except Exception as e:
@@ -88,18 +209,13 @@ def get_svg_string(actype, category=""):
     clean = str(actype).strip().upper()
     cat = str(category).strip().upper()
     
-    if clean == "A319":
-        clean = "A19N"
-    
+    if clean == "A319": clean = "A19N"
     if cat == "A7" or clean in HELICOPTER_TYPES or "HELI" in clean or clean.startswith("H"):
         clean = "H60"
 
-    if clean in SVG_CACHE:
-        return SVG_CACHE[clean]
-    
+    if clean in SVG_CACHE: return SVG_CACHE[clean]
     for key, code in SVG_CACHE.items():
-        if clean in key or key in clean:
-            return code
+        if clean in key or key in clean: return code
             
     return SVG_CACHE["DEFAULT"]
 
@@ -134,15 +250,17 @@ def extract_heading(plane, hex_code):
 class DataFetchThread(QThread):
     data_ready = pyqtSignal(dict)
 
-    def __init__(self, selected_hex=None):
+    def __init__(self, lat, lon, selected_hex=None):
         super().__init__()
+        self.lat = lat
+        self.lon = lon
         self.selected_hex = selected_hex
 
     def run(self):
         result = {"aircraft": [], "tracked_plane": None, "closest_plane": None, "route": ("N/A", "N/A"), "trace": []}
         endpoints = [
-            f"https://opendata.adsb.fi/api/v3/lat/{MY_LAT}/lon/{MY_LON}/dist/{RADIUS_NM}",
-            f"https://api.adsb.lol/v2/lat/{MY_LAT}/lon/{MY_LON}/dist/{RADIUS_NM}"
+            f"https://opendata.adsb.fi/api/v3/lat/{self.lat}/lon/{self.lon}/dist/{RADIUS_NM}",
+            f"https://api.adsb.lol/v2/lat/{self.lat}/lon/{self.lon}/dist/{RADIUS_NM}"
         ]
 
         aircraft_list = []
@@ -167,14 +285,13 @@ class DataFetchThread(QThread):
             p_hex = str(plane.get("hex", "")).upper()
             
             if p_lat is not None and p_lon is not None:
-                # Update local memory as a fallback
                 coords = [p_lat, p_lon]
                 if not POSITION_HISTORY[p_hex] or POSITION_HISTORY[p_hex][-1] != coords:
                     POSITION_HISTORY[p_hex].append(coords)
                     if len(POSITION_HISTORY[p_hex]) > MAX_HISTORY_POINTS:
                         POSITION_HISTORY[p_hex].pop(0)
 
-                dist = haversine_nm(MY_LAT, MY_LON, p_lat, p_lon)
+                dist = haversine_nm(self.lat, self.lon, p_lat, p_lon)
                 if dist < min_dist:
                     min_dist = dist
                     closest = plane
@@ -189,7 +306,6 @@ class DataFetchThread(QThread):
             tracked_hex = str(tracked.get("hex", "")).lower()
             callsign = str(tracked.get("flight", "")).strip()
 
-            # Attempt to fetch full route history directly from API
             api_trace_fetched = False
             try:
                 trace_url = f"https://opendata.adsb.fi/api/v2/trace/{tracked_hex}"
@@ -206,11 +322,9 @@ class DataFetchThread(QThread):
             except Exception as e:
                 print(f"Error fetching API trace: {e}")
 
-            # Fall back to locally stored coordinates if API trace returns nothing
             if not api_trace_fetched:
                 result["trace"] = POSITION_HISTORY.get(tracked_hex.upper(), [])
 
-            # Fetch flight origin & destination
             if callsign and callsign not in ["UNKNOWN", "N/A"]:
                 try:
                     r_res = requests.get(f"https://api.adsbdb.com/v0/callsign/{callsign}", headers=HEADERS, timeout=2)
@@ -252,7 +366,7 @@ BASE_MAP_HTML = f"""
         var map = L.map('map').setView([{MY_LAT}, {MY_LON}], {DEFAULT_ZOOM});
         L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}', {{ maxZoom: 18 }}).addTo(map);
 
-        L.circleMarker([{MY_LAT}, {MY_LON}], {{ radius: 6, color: '#FFF', fillColor: '#FF007F', fillOpacity: 1 }}).bindTooltip("Monitoring Location").addTo(map);
+        var centerMarker = L.circleMarker([{MY_LAT}, {MY_LON}], {{ radius: 6, color: '#FFF', fillColor: '#FF007F', fillOpacity: 1 }}).bindTooltip("Monitoring Location").addTo(map);
 
         var aircraftMarkers = {{}};
         var leadLine = null, trailLine = null;
@@ -261,7 +375,13 @@ BASE_MAP_HTML = f"""
             console.log('SELECT_HEX:CLEAR');
         }});
 
-        function updateMapData(aircraftList, trackedHex, trackedTrace) {{
+        function setMapCenter(lat, lon, label) {{
+            map.setView([lat, lon], {DEFAULT_ZOOM});
+            centerMarker.setLatLng([lat, lon]);
+            centerMarker.setTooltipContent(label || "Monitoring Location");
+        }}
+
+        function updateMapData(aircraftList, trackedHex, trackedTrace, centerLat, centerLon) {{
             var active = {{}};
 
             aircraftList.forEach(function(p) {{
@@ -293,7 +413,7 @@ BASE_MAP_HTML = f"""
                 }}
 
                 if (isTracked) {{
-                    var lineCoords = [[{MY_LAT}, {MY_LON}], [p.lat, p.lon]];
+                    var lineCoords = [[centerLat, centerLon], [p.lat, p.lon]];
                     if (leadLine) leadLine.setLatLngs(lineCoords);
                     else leadLine = L.polyline(lineCoords, {{ color: '#FF007F', weight: 2, dashArray: '5,5' }}).addTo(map);
                 }}
@@ -303,7 +423,6 @@ BASE_MAP_HTML = f"""
                 if (!active[hex]) {{ map.removeLayer(aircraftMarkers[hex]); delete aircraftMarkers[hex]; }}
             }}
 
-            // Render solid green route trail
             if (trackedHex && trackedTrace && trackedTrace.length >= 2) {{
                 var trailOptions = {{
                     color: '#00FF88',
@@ -350,6 +469,8 @@ class SatelliteMapTracker(QMainWindow):
         self.setWindowTitle("Satellite ADSB Aircraft Tracker")
         self.setGeometry(100, 100, 1200, 750)
 
+        self.current_lat = MY_LAT
+        self.current_lon = MY_LON
         self.selected_hex = None
 
         main_widget = QWidget()
@@ -362,12 +483,71 @@ class SatelliteMapTracker(QMainWindow):
         self.data_panel.setStyleSheet("background-color: #121212; color: #FFFFFF;")
         panel_layout = QVBoxLayout(self.data_panel)
 
+        search_title = QLabel("MAP CENTER / AIRPORT SEARCH")
+        search_title.setStyleSheet("font-size: 10px; color: #888888; font-weight: bold;")
+        panel_layout.addWidget(search_title)
+
+        self.combo_box = QComboBox()
+        self.combo_box.setEditable(True)
+        self.combo_box.setStyleSheet("""
+            QComboBox {
+                background-color: #1A1A1A;
+                color: #FFFFFF;
+                border: 1px solid #333;
+                padding: 4px;
+                font-size: 11px;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #1A1A1A;
+                color: #FFFFFF;
+                selection-background-color: #FF007F;
+            }
+        """)
+        
+        # Custom Runway Approaches & Fixes
+        for name, coords in CUSTOM_RUNWAY_APPROACHES:
+            self.combo_box.addItem(name, coords)
+
+        # Add top 10 busiest airports
+        for label, icao in BUSIEST_AIRPORTS:
+            if icao in AIRPORTS_DB:
+                ap = AIRPORTS_DB[icao]
+                self.combo_box.addItem(f"🔥 {label}", f"{ap['lat']},{ap['lon']}")
+
+        # Add additional airports from database
+        for icao, ap in list(AIRPORTS_DB.items())[:50]:
+            if icao not in [b[1] for b in BUSIEST_AIRPORTS]:
+                self.combo_box.addItem(f"{icao} - {ap['name']}", f"{ap['lat']},{ap['lon']}")
+
+        self.combo_box.lineEdit().setPlaceholderText("Type ICAO (e.g. EGLL) or Lat,Lon")
+        panel_layout.addWidget(self.combo_box)
+
+        go_btn = QPushButton("Go To Location")
+        go_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #FF007F;
+                color: white;
+                font-weight: bold;
+                border: none;
+                padding: 6px;
+                border-radius: 2px;
+            }
+            QPushButton:hover {
+                background-color: #E0006F;
+            }
+        """)
+        go_btn.clicked.connect(self.process_location_input)
+        self.combo_box.lineEdit().returnPressed.connect(self.process_location_input)
+        panel_layout.addWidget(go_btn)
+
+        panel_layout.addSpacing(10)
+
         self.title_label = QLabel("TRACKED AIRCRAFT (CLOSEST)")
         self.title_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #FF007F;")
         panel_layout.addWidget(self.title_label)
 
         self.info_labels = {}
-        fields = ["callsign", "actype", "registration", "origin", "destination", "distance", "hex", "alt", "speed", "heading"]
+        fields = ["callsign", "airline", "actype", "registration", "origin", "destination", "distance", "hex", "alt", "speed", "heading"]
         for key in fields:
             t = QLabel(key.upper())
             t.setStyleSheet("font-size: 10px; color: #888888;")
@@ -394,6 +574,42 @@ class SatelliteMapTracker(QMainWindow):
         self.timer.start(5000)
         self.start_async_update()
 
+    def process_location_input(self):
+        text = self.combo_box.currentText().strip()
+        data = self.combo_box.currentData()
+
+        if data and "," in str(data):
+            try:
+                lat, lon = map(float, str(data).split(","))
+                self.update_location(lat, lon, text)
+                return
+            except ValueError:
+                pass
+
+        coord_match = re.match(r"^([-+]?\d*\.?\d+)\s*,\s*([-+]?\d*\.?\d+)$", text)
+        if coord_match:
+            lat = float(coord_match.group(1))
+            lon = float(coord_match.group(2))
+            self.update_location(lat, lon, f"Coords: {lat:.4f}, {lon:.4f}")
+            return
+
+        icao = text.upper().strip()
+        if icao in AIRPORTS_DB:
+            ap = AIRPORTS_DB[icao]
+            label = f"{ap['name']} ({icao})"
+            self.update_location(ap["lat"], ap["lon"], label)
+            return
+
+        print("Invalid location or unknown ICAO code.")
+
+    def update_location(self, lat, lon, label):
+        self.current_lat = lat
+        self.current_lon = lon
+        self.selected_hex = None
+        
+        self.web_view.page().runJavaScript(f"setMapCenter({self.current_lat}, {self.current_lon}, '{label}');")
+        self.start_async_update()
+
     def on_plane_selected(self, hex_code):
         clean_hex = hex_code.strip().upper()
         if clean_hex and clean_hex != self.selected_hex:
@@ -406,7 +622,7 @@ class SatelliteMapTracker(QMainWindow):
     def start_async_update(self):
         if self.fetch_thread and self.fetch_thread.isRunning():
             return
-        self.fetch_thread = DataFetchThread(selected_hex=self.selected_hex)
+        self.fetch_thread = DataFetchThread(self.current_lat, self.current_lon, selected_hex=self.selected_hex)
         self.fetch_thread.data_ready.connect(self.handle_data_ready)
         self.fetch_thread.start()
 
@@ -431,7 +647,7 @@ class SatelliteMapTracker(QMainWindow):
                 "actype": actype,
                 "svgCode": get_svg_string(actype, category),
                 "heading": extract_heading(p, p_hex),
-                "dist": haversine_nm(MY_LAT, MY_LON, lat, lon)
+                "dist": haversine_nm(self.current_lat, self.current_lon, lat, lon)
             })
 
         tracked_hex = str(tracked.get("hex", "")).upper() if tracked else ""
@@ -448,18 +664,22 @@ class SatelliteMapTracker(QMainWindow):
         else:
             self.title_label.setText("TRACKED AIRCRAFT (CLOSEST)")
 
-        self.web_view.page().runJavaScript(f"updateMapData({json.dumps(formatted)}, '{tracked_hex}', {json.dumps(trace)});")
+        self.web_view.page().runJavaScript(
+            f"updateMapData({json.dumps(formatted)}, '{tracked_hex}', {json.dumps(trace)}, {self.current_lat}, {self.current_lon});"
+        )
 
         if not tracked:
             for l in self.info_labels.values(): l.setText("--")
             return
 
-        self.info_labels["callsign"].setText(str(tracked.get("flight", "UNKNOWN")).strip())
+        callsign_val = str(tracked.get("flight", "UNKNOWN")).strip()
+        self.info_labels["callsign"].setText(callsign_val)
+        self.info_labels["airline"].setText(get_airline_name(callsign_val))
         self.info_labels["actype"].setText(str(tracked.get("t", "N/A")))
         self.info_labels["registration"].setText(str(tracked.get("r", "N/A")))
         self.info_labels["origin"].setText(get_airport_name(route[0]))
         self.info_labels["destination"].setText(get_airport_name(route[1]))
-        dist = haversine_nm(MY_LAT, MY_LON, tracked.get("lat"), tracked.get("lon"))
+        dist = haversine_nm(self.current_lat, self.current_lon, tracked.get("lat"), tracked.get("lon"))
         self.info_labels["distance"].setText(f"{dist:.2f} NM")
         self.info_labels["hex"].setText(tracked_hex)
         self.info_labels["alt"].setText(f"{tracked.get('alt_baro', 'N/A')} ft")
